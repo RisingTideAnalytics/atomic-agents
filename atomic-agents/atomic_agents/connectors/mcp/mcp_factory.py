@@ -1,29 +1,28 @@
 import asyncio
 import logging
-from typing import Any, List, Type, Optional, Union, Tuple, cast
-from contextlib import AsyncExitStack
 import shlex
 import types
+from contextlib import AsyncExitStack
+from typing import Any, List, Optional, Tuple, Type, Union, cast
 
-from pydantic import create_model, Field, BaseModel
-
+import mcp.types
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
-import mcp.types
+from pydantic import BaseModel, Field, create_model
 
+from atomic_agents.base import BasePrompt, BaseResource, BaseTool
 from atomic_agents.base.base_io_schema import BaseIOSchema
-from atomic_agents.base import BaseTool, BaseResource, BasePrompt
-from atomic_agents.connectors.mcp.schema_transformer import SchemaTransformer
 from atomic_agents.connectors.mcp.mcp_definition_service import (
     MCPAttributeType,
     MCPDefinitionService,
+    MCPPromptDefinition,
+    MCPResourceDefinition,
     MCPToolDefinition,
     MCPTransportType,
-    MCPResourceDefinition,
-    MCPPromptDefinition,
 )
+from atomic_agents.connectors.mcp.schema_transformer import SchemaTransformer
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +56,7 @@ class MCPFactory:
         client_session: Optional[ClientSession] = None,
         event_loop: Optional[asyncio.AbstractEventLoop] = None,
         working_directory: Optional[str] = None,
+        headers: dict[str, str] = {},
     ):
         """
         Initialize the factory.
@@ -67,6 +67,7 @@ class MCPFactory:
             client_session: Optional pre-initialized ClientSession for reuse
             event_loop: Optional event loop for running asynchronous operations
             working_directory: Optional working directory to use when running STDIO commands
+            headers: Optional headers to use when making the request
         """
         self.mcp_endpoint = mcp_endpoint
         self.transport_type = transport_type
@@ -74,6 +75,7 @@ class MCPFactory:
         self.event_loop = event_loop
         self.schema_transformer = SchemaTransformer()
         self.working_directory = working_directory
+        self.headers = headers
 
         # Validate configuration
         if client_session is not None and event_loop is None:
@@ -155,6 +157,7 @@ class MCPFactory:
                     bound_transport_type = self.transport_type
                     persistent_session: Optional[ClientSession] = getattr(self, "_client_session", None)
                     bound_working_directory = getattr(self, "working_directory", None)
+                    bound_headers = getattr(self, "headers", {})
 
                     # Get arguments, excluding tool_name
                     arguments = params.model_dump(exclude={"tool_name"}, exclude_none=True)
@@ -180,13 +183,17 @@ class MCPFactory:
                                 # See: https://github.com/modelcontextprotocol/python-sdk/issues/732
                                 http_endpoint = f"{bound_mcp_endpoint}/mcp/"
                                 logger.debug(f"Executing tool '{bound_tool_name}' via HTTP Stream: endpoint={http_endpoint}")
-                                http_transport = await stack.enter_async_context(streamablehttp_client(http_endpoint))
+                                http_transport = await stack.enter_async_context(
+                                    streamablehttp_client(http_endpoint, headers=bound_headers)
+                                )
                                 read_stream, write_stream, _ = http_transport
                             elif bound_transport_type == MCPTransportType.SSE:
                                 # SSE transport (deprecated)
                                 sse_endpoint = f"{bound_mcp_endpoint}/sse"
                                 logger.debug(f"Executing tool '{bound_tool_name}' via SSE: endpoint={sse_endpoint}")
-                                sse_transport = await stack.enter_async_context(sse_client(sse_endpoint))
+                                sse_transport = await stack.enter_async_context(
+                                    sse_client(sse_endpoint, headers=bound_headers)
+                                )
                                 read_stream, write_stream = sse_transport
                             else:
                                 available_types = [t.value for t in MCPTransportType]
@@ -257,6 +264,7 @@ class MCPFactory:
                     "_client_session": self.client_session,
                     "_event_loop": self.event_loop,
                     "working_directory": self.working_directory,
+                    "headers": self.headers,
                 }
 
                 # Create the class using new_class() for proper generic type support
@@ -653,6 +661,7 @@ class MCPFactory:
                     bound_transport_type = self.transport_type
                     persistent_session: Optional[ClientSession] = getattr(self, "_client_session", None)
                     bound_working_directory = getattr(self, "working_directory", None)
+                    bound_headers = getattr(self, "headers", {})
 
                     # Get arguments
                     arguments = params.model_dump(exclude={"prompt_name"}, exclude_none=True)
@@ -680,13 +689,17 @@ class MCPFactory:
                                 # See: https://github.com/modelcontextprotocol/python-sdk/issues/732
                                 http_endpoint = f"{bound_mcp_endpoint}/mcp/"
                                 logger.debug(f"Getting prompt '{bound_prompt_name}' via HTTP Stream: endpoint={http_endpoint}")
-                                http_transport = await stack.enter_async_context(streamablehttp_client(http_endpoint))
+                                http_transport = await stack.enter_async_context(
+                                    streamablehttp_client(http_endpoint, headers=bound_headers)
+                                )
                                 read_stream, write_stream, _ = http_transport
                             elif bound_transport_type == MCPTransportType.SSE:
                                 # SSE transport (deprecated)
                                 sse_endpoint = f"{bound_mcp_endpoint}/sse"
                                 logger.debug(f"Getting prompt '{bound_prompt_name}' via SSE: endpoint={sse_endpoint}")
-                                sse_transport = await stack.enter_async_context(sse_client(sse_endpoint))
+                                sse_transport = await stack.enter_async_context(
+                                    sse_client(sse_endpoint, headers=bound_headers)
+                                )
                                 read_stream, write_stream = sse_transport
                             else:
                                 available_types = [t.value for t in MCPTransportType]
@@ -778,6 +791,7 @@ class MCPFactory:
                     "_client_session": self.client_session,
                     "_event_loop": self.event_loop,
                     "working_directory": self.working_directory,
+                    "headers": self.headers,
                 }
 
                 # Create the class using new_class() for proper generic type support
@@ -806,6 +820,7 @@ def fetch_mcp_tools(
     client_session: Optional[ClientSession] = None,
     event_loop: Optional[asyncio.AbstractEventLoop] = None,
     working_directory: Optional[str] = None,
+    headers: dict[str, str] = {},
 ) -> List[Type[BaseTool]]:
     """
     Connects to an MCP server via SSE, HTTP Stream or STDIO, discovers tool definitions, and dynamically generates
@@ -818,8 +833,9 @@ def fetch_mcp_tools(
         client_session: Optional pre-initialized ClientSession for reuse.
         event_loop: Optional event loop for running asynchronous operations.
         working_directory: Optional working directory for STDIO.
+        headers: Optional headers to use when making the request
     """
-    factory = MCPFactory(mcp_endpoint, transport_type, client_session, event_loop, working_directory)
+    factory = MCPFactory(mcp_endpoint, transport_type, client_session, event_loop, working_directory, headers)
     return factory.create_tools()
 
 
@@ -829,6 +845,7 @@ async def fetch_mcp_tools_async(
     *,
     client_session: Optional[ClientSession] = None,
     working_directory: Optional[str] = None,
+    headers: dict[str, str] = {},
 ) -> List[Type[BaseTool]]:
     """
     Asynchronously connects to an MCP server and dynamically generates BaseTool subclasses for each tool.
@@ -839,14 +856,17 @@ async def fetch_mcp_tools_async(
         transport_type: Type of transport to use (SSE, HTTP_STREAM, or STDIO).
         client_session: Optional pre-initialized ClientSession for reuse.
         working_directory: Optional working directory for STDIO transport.
+        headers: Optional headers to use when making the request
     """
     if client_session is not None:
         tool_defs = await MCPDefinitionService.fetch_tool_definitions_from_session(client_session)
-        factory = MCPFactory(mcp_endpoint, transport_type, client_session, asyncio.get_running_loop(), working_directory)
+        factory = MCPFactory(
+            mcp_endpoint, transport_type, client_session, asyncio.get_running_loop(), working_directory, headers
+        )
     else:
-        service = MCPDefinitionService(mcp_endpoint, transport_type, working_directory)
+        service = MCPDefinitionService(mcp_endpoint, transport_type, working_directory, headers)
         tool_defs = await service.fetch_tool_definitions()
-        factory = MCPFactory(mcp_endpoint, transport_type, None, None, working_directory)
+        factory = MCPFactory(mcp_endpoint, transport_type, None, None, working_directory, headers)
 
     return factory._create_tool_classes(tool_defs)
 

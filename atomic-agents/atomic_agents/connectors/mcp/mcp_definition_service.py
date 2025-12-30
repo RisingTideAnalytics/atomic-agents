@@ -4,16 +4,16 @@ import logging
 import re
 import shlex
 from contextlib import AsyncExitStack
-from typing import List, NamedTuple, Optional, Dict, Any
 from enum import Enum
+from typing import Any, Dict, List, NamedTuple, Optional
+from urllib.parse import unquote as decode_uri
 
+import mcp.types as types
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
-import mcp.types as types
 from pydantic import AnyUrl
-from urllib.parse import unquote as decode_uri
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +69,7 @@ class MCPDefinitionService:
         endpoint: Optional[str] = None,
         transport_type: MCPTransportType = MCPTransportType.HTTP_STREAM,
         working_directory: Optional[str] = None,
+        headers: dict[str, str] = {},
     ):
         """
         Initialize the service.
@@ -77,10 +78,12 @@ class MCPDefinitionService:
             endpoint: URL of the MCP server (for SSE/HTTP stream) or command string (for STDIO)
             transport_type: Type of transport to use (SSE, HTTP_STREAM, or STDIO)
             working_directory: Optional working directory to use when running STDIO commands
+            headers: Optional headers to use when making the request
         """
         self.endpoint = endpoint
         self.transport_type = transport_type
         self.working_directory = working_directory
+        self.headers = headers
 
     async def fetch_tool_definitions(self) -> List[MCPToolDefinition]:
         """
@@ -116,13 +119,13 @@ class MCPDefinitionService:
                 # See: https://github.com/modelcontextprotocol/python-sdk/issues/732
                 transport_endpoint = f"{self.endpoint}/mcp/"
                 logger.info(f"Attempting HTTP Stream connection to {transport_endpoint}")
-                transport = await stack.enter_async_context(streamablehttp_client(transport_endpoint))
+                transport = await stack.enter_async_context(streamablehttp_client(transport_endpoint, headers=self.headers))
                 read_stream, write_stream, _ = transport
             elif self.transport_type == MCPTransportType.SSE:
                 # SSE transport (deprecated)
                 transport_endpoint = f"{self.endpoint}/sse"
                 logger.info(f"Attempting SSE connection to {transport_endpoint}")
-                transport = await stack.enter_async_context(sse_client(transport_endpoint))
+                transport = await stack.enter_async_context(sse_client(transport_endpoint, headers=self.headers))
                 read_stream, write_stream = transport
             else:
                 available_types = [t.value for t in MCPTransportType]
