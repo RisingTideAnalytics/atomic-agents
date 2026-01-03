@@ -40,6 +40,7 @@ class MCPToolDefinition(NamedTuple):
     name: str
     description: Optional[str]
     input_schema: Dict[str, Any]
+    output_schema: Optional[Dict[str, Any]] = None
     metadata: dict[str, Any] | None = None
 
 
@@ -169,11 +170,14 @@ class MCPDefinitionService:
             await session.initialize()
             response = await session.list_tools()
             for mcp_tool in response.tools:
+                # Capture outputSchema if the MCP server provides one
+                output_schema = getattr(mcp_tool, "outputSchema", None)
                 definitions.append(
                     MCPToolDefinition(
                         name=mcp_tool.name,
                         description=mcp_tool.description,
                         input_schema=mcp_tool.inputSchema or {"type": "object", "properties": {}},
+                        output_schema=output_schema,
                         metadata=mcp_tool.meta or {},
                     )
                 )
