@@ -276,6 +276,7 @@ class MCPFactory:
                 # since they might not be properly inherited with types.new_class
                 setattr(tool_class, "input_schema", InputSchema)
                 setattr(tool_class, "output_schema", OutputSchema)
+                setattr(tool_class, "metadata", definition.metadata or {})
 
                 generated_tools.append(tool_class)
 

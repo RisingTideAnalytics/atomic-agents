@@ -40,6 +40,7 @@ class MCPToolDefinition(NamedTuple):
     name: str
     description: Optional[str]
     input_schema: Dict[str, Any]
+    metadata: dict[str, Any] | None = None
 
 
 class MCPResourceDefinition(NamedTuple):
@@ -50,6 +51,7 @@ class MCPResourceDefinition(NamedTuple):
     uri: str
     input_schema: Dict[str, Any]
     mime_type: Optional[str] = None
+    metadata: dict[str, Any] | None = None
 
 
 class MCPPromptDefinition(NamedTuple):
@@ -58,6 +60,7 @@ class MCPPromptDefinition(NamedTuple):
     name: str
     description: Optional[str]
     input_schema: Dict[str, Any]
+    metadata: dict[str, Any] | None = None
     # required: List[str]  # A list of required argument names
 
 
@@ -171,6 +174,7 @@ class MCPDefinitionService:
                         name=mcp_tool.name,
                         description=mcp_tool.description,
                         input_schema=mcp_tool.inputSchema or {"type": "object", "properties": {}},
+                        metadata=mcp_tool.meta or {},
                     )
                 )
 
@@ -255,11 +259,7 @@ class MCPDefinitionService:
                 for template in res_templates.resourceTemplates:
                     # Resources have no "input_schema" value and use URI templates with parameters.
                     resources_iterable.append(
-                        types.Resource(
-                            name=template.name,
-                            description=template.description,
-                            uri=AnyUrl(template.uriTemplate),
-                        )
+                        types.Resource(name=template.name, description=template.description, uri=AnyUrl(template.uriTemplate))
                     )
 
             for mcp_resource in resources_iterable:
@@ -290,6 +290,7 @@ class MCPDefinitionService:
                         uri=uri,
                         mime_type=getattr(mcp_resource, "mimeType", None),
                         input_schema={"type": "object", "properties": properties, "required": list(placeholders)},
+                        metadata=mcp_resource.meta or {},
                     )
                 )
 
@@ -375,7 +376,8 @@ class MCPDefinitionService:
                             "type": "object",
                             "properties": {arg.name: {"type": "string", "description": arg.description} for arg in arguments},
                             "required": [arg.name for arg in arguments if arg.required],
-                        },
+                            
+                        },           metadata=mcp_prompt.meta or {},
                     )
                 )
             if not prompts:
